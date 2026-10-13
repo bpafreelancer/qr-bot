@@ -2,21 +2,20 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import QRCode from "qrcode";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const TG_ID = process.env.TG_ID; // строка или число — сравнение всё равно приводим к строке
 const TG_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-// Telegram ограничение на QR (примерно 2.9k символов в зависимости от коррекции)
+// Мягкий лимит на длину текста (примерно соответствует пределу QR при коррекции M)
 const MAX_LEN = 2000;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Vercel всегда ждёт 200, иначе Telegram будет ретраить
+  // Всегда 200, иначе Telegram будет ретраить апдейт
   if (req.method !== "POST") {
     return res.status(200).send("ok");
   }
 
   try {
-    if (!BOT_TOKEN || !TG_ID) {
-      console.error("BOT_TOKEN или TG_ID не заданы");
+    if (!BOT_TOKEN) {
+      console.error("BOT_TOKEN не задан");
       return res.status(200).send("ok");
     }
 
@@ -24,18 +23,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const msg = update?.message ?? update?.edited_message;
     const text: string | undefined = msg?.text;
 
-    // Принимаем только текстовые сообщения от нужного пользователя
+    // Реагируем только на текстовые сообщения
     if (!msg || !text) return res.status(200).send("ok");
-
-    const fromId = String(msg.from?.id ?? "");
-    if (fromId !== String(TG_ID)) {
-      // Чужим — ни слова. Просто игнор.
-      return res.status(200).send("ok");
-    }
 
     const chatId: number = msg.chat.id;
     const replyTo: number = msg.message_id;
 
+    // /start — короткая подсказка
+    if (text === "/start") {
+      await callTelegram("sendMessage", {
+        chat_id: chatId,
+        reply_to_message_id: replyTo,
+        text: "Отправь мне любой текст — пришлю QR-код.",
+      });
+      return res.status(200).send("ok");
+    }
+
+    // Слишком длинный текст
     if (text.length > MAX_LEN) {
       await callTelegram("sendMessage", {
         chat_id: chatId,
@@ -68,7 +72,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).send("ok");
   } catch (err) {
     console.error("handler error:", err);
-    // Важно вернуть 200, иначе Telegram будет спамить ретраями
+    // Всё равно 200 — иначе Telegram зациклит ретраи
     return res.status(200).send("ok");
   }
 }
